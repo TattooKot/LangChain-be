@@ -1,4 +1,4 @@
-from prompts import capital_prompt
+from .prompts import capital_prompt
 from langchain_openai import ChatOpenAI
 
 # Ініціалізація LLM
