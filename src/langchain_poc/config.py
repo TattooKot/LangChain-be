@@ -1,10 +1,11 @@
-import os
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
+from pydantic import Field
 
-# Завантажує .env, якщо він присутній
 load_dotenv()
 
-class Settings:
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+class Settings(BaseSettings):
+    OPENAI_API_KEY: str = Field(..., env="OPENAI_API_KEY")
+    DATABASE_URL: str = Field(..., env="DATABASE_URL")
 
 settings = Settings()
