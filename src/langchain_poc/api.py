@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-from .chat import router as chat_router
+
+from .session_controller import router as sessions_router
+from .chime_controller    import router as chime_router
 
 middleware = [
     Middleware(
@@ -13,5 +15,11 @@ middleware = [
     )
 ]
 
-app = FastAPI(middleware=middleware)
-app.include_router(chat_router)
+app = FastAPI(
+    title="LangChain + Chime Hybrid Chat API",
+    version="0.1.0",
+    middleware=middleware
+)
+
+app.include_router(sessions_router)   # /sessions
+app.include_router(chime_router)      # /chime/stream-chat

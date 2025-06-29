@@ -1,6 +1,8 @@
+import uuid
+import datetime
+from typing import List
 from sqlalchemy import create_engine, Column, String, DateTime, MetaData
-from sqlalchemy.orm import declarative_base, sessionmaker
-import uuid, datetime
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 from .config import settings
 
@@ -19,17 +21,17 @@ class SessionRepository:
     def __init__(self):
         self.db = SessionLocal()
 
-    def create_session(self) -> str:
-        session = ChatSession()
-        self.db.add(session)
+    def create(self) -> str:
+        sess = ChatSession()
+        self.db.add(sess)
         self.db.commit()
-        return session.id
+        return sess.id
 
-    def list_sessions(self) -> list[str]:
-        return [s.id for s in self.db.query(ChatSession).all()]
+    def list(self) -> List[str]:
+        return [row.id for row in self.db.query(ChatSession).all()]
 
-    def delete_session(self, conv_id: str) -> None:
-        obj = self.db.query(ChatSession).filter_by(id=conv_id).first()
+    def delete(self, session_id: str) -> None:
+        obj = self.db.query(ChatSession).filter_by(id=session_id).first()
         if obj:
             self.db.delete(obj)
             self.db.commit()
