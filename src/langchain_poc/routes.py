@@ -1,51 +1,72 @@
-from fastapi import APIRouter, HTTPException
+import uuid
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
+
 from .config import settings
-from .pipeline import pipeline
 from .schemas import CapitalRequest, CapitalResponse
-from openai import OpenAI
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+from .pipeline import pipeline  # ваш LangChain-пайплайн
 
 router = APIRouter()
 
 @router.post(
     "/capital",
     response_model=CapitalResponse,
-    summary="Отримати столицю країни",
-    tags=["capital"]
+    summary="Синхронне повернення столиці з conversation_id",
+    tags=["capital"],
 )
 async def get_capital(req: CapitalRequest):
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
+
+    # згенеруємо або підхопимо існуючий ID
+    conv_id = req.conversation_id or str(uuid.uuid4())
+
+    # отримуємо столицю
     resp = pipeline.invoke({"country": req.country})
-    return CapitalResponse(country=req.country, capital=resp.content)
+
+    # повертаємо разом із ID
+    return CapitalResponse(
+        country=req.country,
+        capital=resp.content,
+        conversation_id=conv_id,
+    )
 
 
 @router.post(
     "/stream-capital",
-    summary="Стрімінг відповіді: столиця країни токен за токеном",
+    summary="Стрімінг відповіді з conversation_id",
     tags=["capital"],
 )
-async def stream_capital(req: CapitalRequest):
+async def stream_capital(req: CapitalRequest, response: Response):
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
 
+    # згенеруємо або підхопимо існуючий ID
+    conv_id = req.conversation_id or str(uuid.uuid4())
+
+    # додаємо його в заголовки відповіді — клієнт може зчитати X-Conversation-ID
+    response.headers["X-Conversation-ID"] = conv_id
+
     def event_generator():
-        # Пачка повідомлень для моделі
+        # спочатку відправимо окрему подію з ID (як custom SSE event)
+        yield f"event: conversation_id\ndata: {conv_id}\n\n"
+
+        # тепер сам стрім токенів
+        from openai import OpenAI
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
         messages = [{"role": "user", "content": f"What is the capital of {req.country}?"}]
 
-        # Викликаємо новий метод chat.completions.create з stream=True
         for chunk in client.chat.completions.create(
                 model="gpt-4.1-nano",
                 messages=messages,
                 stream=True
         ):
-            # У v1 API токени — в choices[0].delta.content
             delta = chunk.choices[0].delta.content
             if delta:
-                yield f"data: {delta}\n\n"
+                yield f"event: token\ndata: {delta}\n\n"
 
-        # Позначаємо кінець потоку
+        # сигналізуємо кінець потоку
         yield "event: done\ndata: \n\n"
 
     return StreamingResponse(
