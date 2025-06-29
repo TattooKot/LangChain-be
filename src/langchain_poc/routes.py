@@ -3,70 +3,63 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 from .config import settings
-from .schemas import CapitalRequest, CapitalResponse
-from .pipeline import pipeline  # ваш LangChain-пайплайн
+from .schemas import ChatRequest
+from openai import OpenAI
 
 router = APIRouter()
 
+# In-memory сховище історій: {conversation_id: [{"role":..., "content":...}, ...]}
+conversations: dict[str, list[dict]] = {}
+
+# Ініціалізуємо клієнт once
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
 @router.post(
-    "/capital",
-    response_model=CapitalResponse,
-    summary="Синхронне повернення столиці з conversation_id",
-    tags=["capital"],
+    "/stream-chat",
+    summary="Стрімінг багатокрокової розмови з conversation_id",
+    tags=["chat"],
 )
-async def get_capital(req: CapitalRequest):
+async def stream_chat(req: ChatRequest, response: Response):
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
 
-    # згенеруємо або підхопимо існуючий ID
+    # Генеруємо або підхоплюємо UUID
     conv_id = req.conversation_id or str(uuid.uuid4())
+    # Підхоплюємо історію або ініціалізуємо нову
+    history = conversations.setdefault(conv_id, [])
+    # Додаємо нове user-повідомлення
+    history.append({"role": "user", "content": req.message})
 
-    # отримуємо столицю
-    resp = pipeline.invoke({"country": req.country})
-
-    # повертаємо разом із ID
-    return CapitalResponse(
-        country=req.country,
-        capital=resp.content,
-        conversation_id=conv_id,
-    )
-
-
-@router.post(
-    "/stream-capital",
-    summary="Стрімінг відповіді з conversation_id",
-    tags=["capital"],
-)
-async def stream_capital(req: CapitalRequest, response: Response):
-    if not settings.OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
-
-    # згенеруємо або підхопимо існуючий ID
-    conv_id = req.conversation_id or str(uuid.uuid4())
-
-    # додаємо його в заголовки відповіді — клієнт може зчитати X-Conversation-ID
+    # Віддаємо ID в заголовку
     response.headers["X-Conversation-ID"] = conv_id
 
     def event_generator():
-        # спочатку відправимо окрему подію з ID (як custom SSE event)
+        # Спочатку сповіщаємо про conversation_id
         yield f"event: conversation_id\ndata: {conv_id}\n\n"
 
-        # тепер сам стрім токенів
-        from openai import OpenAI
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
-
-        messages = [{"role": "user", "content": f"What is the capital of {req.country}?"}]
-
+        # Стрімимо відповідь токен за токеном
         for chunk in client.chat.completions.create(
                 model="gpt-4.1-nano",
-                messages=messages,
+                messages=history,
                 stream=True
         ):
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield f"event: token\ndata: {delta}\n\n"
+            token = chunk.choices[0].delta.content
+            if token:
+                yield f"event: token\ndata: {token}\n\n"
 
-        # сигналізуємо кінець потоку
+        # Після завершення збираємо повну відповідь
+        # і зберігаємо її в історії
+        full_reply = "".join(
+            c.choices[0].delta.content
+            for c in client.chat.completions.create(
+                model="gpt-4.1-nano",
+                messages=history,
+                stream=True
+            )
+        )
+        history.append({"role": "assistant", "content": full_reply})
+
+        # Сигналізуємо кінець
         yield "event: done\ndata: \n\n"
 
     return StreamingResponse(
