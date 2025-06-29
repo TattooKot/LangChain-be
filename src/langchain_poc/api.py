@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-
-from .routes import router
+from .chat import router as chat_router
 
 middleware = [
     Middleware(
@@ -10,15 +9,9 @@ middleware = [
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
-        allow_credentials=True,
+        expose_headers=["X-Conversation-ID"],
     )
 ]
 
-app = FastAPI(
-    title="LangChain Stream Chat API",
-    version="0.1.0",
-    description="Streaming chat API with conversation memory",
-    middleware=middleware,
-)
-
-app.include_router(router)
+app = FastAPI(middleware=middleware)
+app.include_router(chat_router)

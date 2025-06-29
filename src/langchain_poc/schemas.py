@@ -3,7 +3,4 @@ from typing import Optional
 
 class ChatRequest(BaseModel):
     message: str
-    conversation_id: Optional[str] = Field(
-        default=None,
-        description="UUID сесії. Якщо не заданий, сервер згенерує новий."
-    )
+    conversation_id: Optional[str] = Field(None, description="UUID session, generated if absent")
