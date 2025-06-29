@@ -34,9 +34,21 @@ async def stream_chat(req: ChatRequest, response: Response):
     tags=["chat"],
 )
 async def list_sessions():
-    """
-    Повертає масив рядків із усіма chat_session.id,
-    які збереглися в базі.
-    """
+    ids = session_repo.list_sessions()
+    return SessionsResponse(sessions=ids)
+
+@router.delete(
+    "/sessions/{conversation_id}",
+    response_model=SessionsResponse,
+    summary="Видалити одну сесію за conversation_id",
+    tags=["chat"],
+)
+async def delete_session(conversation_id: str):
+    # видаляємо із БД
+    session_repo.delete_session(conversation_id)
+    # також можна очистити in-memory історію, якщо потрібно
+    # from .conversation_repository import conversations
+    # conversations.pop(conversation_id, None)
+    # повертаємо оновлений список
     ids = session_repo.list_sessions()
     return SessionsResponse(sessions=ids)

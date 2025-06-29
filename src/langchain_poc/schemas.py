@@ -3,11 +3,7 @@ from typing import Optional, List
 
 class ChatRequest(BaseModel):
     message: str
-    conversation_id: Optional[str] = Field(
-        None, description="UUID сесії. Якщо не заданий, сервер згенерує новий."
-    )
+    conversation_id: Optional[str] = Field(None, description="UUID сесії")
 
 class SessionsResponse(BaseModel):
-    sessions: List[str] = Field(
-        ..., description="Список всіх доступних conversation_id"
-    )
+    sessions: List[str] = Field(..., description="Список всіх conversation_id")
