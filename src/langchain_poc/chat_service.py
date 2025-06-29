@@ -1,4 +1,4 @@
-from typing import Generator
+from typing import Generator, Optional
 from openai import OpenAI
 from fastapi import HTTPException
 
@@ -14,25 +14,28 @@ class ChatService:
         self.sessions = SessionRepository()
         self.chime    = ChimeRepository()
 
-    def stream_chat(self, message: str, conv_id: str | None) -> Generator[str, None, None]:
-        # 1. Забезпечити існування сесії в Postgres
-        if conv_id:
-            session_id = conv_id
+    def stream_chat(
+            self, message: str, session_id: Optional[str]
+    ) -> Generator[str, None, None]:
+        # 1) Якщо session_id заданий і є в БД — витягаємо його ARN, інакше створюємо новий канал + запис
+        if session_id:
+            arn = self.sessions.get_channel_arn(session_id)
+            if not arn:
+                raise HTTPException(404, "Session not found")
         else:
-            session_id = self.sessions.create()
-        # 2. Забезпечити існування каналу в Chime
-        #    (ми просто використовуємо session_id як ARN, тому якщо це не ARN, створимо новий канал)
-        if session_id.startswith("arn:"):
-            channel_arn = session_id
-        else:
-            channel_arn = self.chime.create_channel()
-        # 3. Додаємо user-повідомлення в Chime
-        self.chime.append_message(channel_arn, message, sender_role="user")
-        # 4. SSE: спочатку повертаємо ідентифікатор сесії
+            arn = self.chime.create_channel()
+            session_id = self.sessions.create(arn)
+
+        # 2) Додаємо user-повідомлення до Chime
+        self.chime.append_message(arn, message, sender_role="user")
+
+        # 3) SSE: спочатку віддаємо internal session_id
         yield f"event: conversation_id\ndata: {session_id}\n\n"
-        # 5. Підтягуємо всю історію з Chime
-        history = self.chime.get_history(channel_arn)
-        # 6. Стрімимо від LLM
+
+        # 4) Підтягуємо історію
+        history = self.chime.get_history(arn)
+
+        # 5) Стрімимо токени з LLM
         tokens: list[str] = []
         for chunk in self.llm.chat.completions.create(
                 model="gpt-4.1-nano", messages=history, stream=True
@@ -41,8 +44,9 @@ class ChatService:
             if delta:
                 tokens.append(delta)
                 yield f"event: token\ndata: {delta}\n\n"
+
         full = "".join(tokens)
-        # 7. Зберігаємо відповідь асистента в Chime
-        self.chime.append_message(channel_arn, full, sender_role="assistant")
-        # 8. Сигнал готовності
+        # 6) Додаємо відповідь асистента в Chime
+        self.chime.append_message(arn, full, sender_role="assistant")
+        # 7) Сигнал завершення
         yield "event: done\ndata: \n\n"
