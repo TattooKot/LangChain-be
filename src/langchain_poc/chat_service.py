@@ -1,11 +1,14 @@
 from typing import Generator, Optional
-from openai import OpenAI
 from fastapi import HTTPException
 import uuid
 
 from .config import settings
 from .session_repository import SessionRepository
 from .chime_repository import ChimeRepository
+
+# LangChain imports
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage
 
 class ChatService:
     def __init__(self):
@@ -14,7 +17,11 @@ class ChatService:
         if not settings.CHIME_APP_INSTANCE_ARN or not settings.CHIME_APP_INSTANCE_USER_ARN:
             raise HTTPException(500, "Chime settings not set")
 
-        self.llm = OpenAI(api_key=settings.OPENAI_API_KEY)
+        self.llm = ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model="gpt-4.1-nano",
+            streaming=True,
+        )
         self.sessions = SessionRepository()
         self.chime = ChimeRepository()
 
@@ -40,15 +47,24 @@ class ChatService:
         # 4) Підтягуємо історію з Chime
         history = self.chime.get_history(arn)
 
-        # 5) Стрімимо токени з LLM
+        # 5) Формуємо LangChain messages
+        lc_messages = []
+        for m in history:
+            if m["role"] == "user":
+                lc_messages.append(HumanMessage(content=m["content"]))
+            else:
+                lc_messages.append(AIMessage(content=m["content"]))
+
+        lc_messages.append(HumanMessage(content=message))
+
+        # 5) Стрімимо токени з LLM через LangChain
         tokens: list[str] = []
-        for chunk in self.llm.chat.completions.create(
-                model="gpt-4.1-nano", messages=history, stream=True
-        ):
-            delta = chunk.choices[0].delta.content
-            if delta:
-                tokens.append(delta)
-                yield f"event: token\ndata: {delta}\n\n"
+        def on_token(token):
+            tokens.append(token)
+            yield f"event: token\ndata: {token}\n\n"
+
+        # LangChain streaming: use the .stream method
+        yield from self._stream_langchain(lc_messages, tokens)
 
         full_response = "".join(tokens)
 
@@ -57,3 +73,10 @@ class ChatService:
 
         # 7) Сигнал завершення
         yield "event: done\ndata: \n\n"
+
+    def _stream_langchain(self, lc_messages, tokens):
+        # LangChain's .stream yields tokens
+        for chunk in self.llm.stream(lc_messages):
+            if hasattr(chunk, "content") and chunk.content:
+                tokens.append(chunk.content)
+                yield f"event: token\ndata: {chunk.content}\n\n"
