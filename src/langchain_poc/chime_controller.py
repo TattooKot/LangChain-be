@@ -15,7 +15,7 @@ chime_repo = ChimeRepository()
 session_repo = SessionRepository()
 
 @router.post(
-    "/stream-chat",
+    "/post-question",
     summary="Стрімінг чат через Chime SDK",
     response_class=StreamingResponse,
 )
@@ -24,7 +24,7 @@ async def stream_chime_chat(req: ChatRequest, response: Response):
     # новий канал + запис у Postgres, якщо req.conversation_id==None
     response.headers["X-Conversation-ID"] = ""
     try:
-        gen = service.stream_chat(req.message, req.conversation_id)
+        gen = service.stream_chat_with_chime_updates(req.message, req.conversation_id)
         return StreamingResponse(
             gen,
             media_type="text/event-stream",
@@ -33,8 +33,6 @@ async def stream_chime_chat(req: ChatRequest, response: Response):
                 "Access-Control-Expose-Headers": "X-Conversation-ID",
             },
         )
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 

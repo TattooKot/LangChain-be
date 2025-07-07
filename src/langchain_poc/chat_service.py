@@ -1,12 +1,14 @@
 import asyncio
 import json
 import uuid
+import logging
 from typing import AsyncGenerator, Optional
 from openai import AsyncOpenAI
 from .config import settings
 from .chime_repository import ChimeRepository
 from .session_repository import SessionRepository
 
+logger = logging.getLogger(__name__)
 class ChatService:
     def __init__(self):
         self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
@@ -14,8 +16,8 @@ class ChatService:
         self.session_repo = SessionRepository()
 
     async def stream_chat_with_chime_updates(
-        self, 
-        message: str, 
+        self,
+        message: str,
         conversation_id: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
@@ -24,7 +26,7 @@ class ChatService:
         2. Stream OpenAI response and update the Chime message with each chunk
         3. Frontend receives WebSocket events from AWS Chime
         """
-        
+
         # Step 1: Get or create session and channel
         if conversation_id:
             channel_arn = self.session_repo.get_channel_arn(conversation_id)
@@ -36,7 +38,7 @@ class ChatService:
             channel_name = f"chat-{conversation_id}"
             channel_arn = self.chime_repo.create_channel(channel_name)
             self.session_repo.create_session(conversation_id, channel_arn)
-            
+
             # Yield the conversation ID to the client
             yield f"event: conversation_id\ndata: {conversation_id}\n\n"
 
@@ -45,17 +47,17 @@ class ChatService:
 
         # Step 3: Send initial "Thinking..." message to Chime channel
         thinking_message_id = self.chime_repo.send_initial_message(
-            channel_arn, 
+            channel_arn,
             "🤔 Thinking..."
         )
 
         # Step 4: Get conversation history for context
         history = self.chime_repo.get_history(channel_arn)
-        
+
         # Prepare messages for OpenAI (exclude the "Thinking..." message)
         openai_messages = [
-            {"role": msg["role"], "content": msg["content"]} 
-            for msg in history 
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in history
             if msg["content"] != "🤔 Thinking..."
         ]
 
@@ -74,16 +76,14 @@ class ChatService:
                 if chunk.choices[0].delta.content:
                     token = chunk.choices[0].delta.content
                     full_response += token
-                    
+
                     # Step 6: Update the Chime message with accumulated response
                     self.chime_repo.update_channel_message(
                         channel_arn,
                         thinking_message_id,
                         full_response
                     )
-                    
-                    # Yield token for HTTP streaming (backward compatibility)
-                    # yield f"event: token\ndata: {token}\n\n"
+
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
@@ -94,13 +94,3 @@ class ChatService:
             )
             yield f"event: error\ndata: {error_msg}\n\n"
 
-    async def stream_chat(
-        self, 
-        message: str, 
-        conversation_id: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        Legacy method for backward compatibility with existing HTTP streaming
-        """
-        async for chunk in self.stream_chat_with_chime_updates(message, conversation_id):
-            yield chunk
