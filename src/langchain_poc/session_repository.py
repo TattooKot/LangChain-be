@@ -43,6 +43,12 @@ class SessionRepository:
         self.db.add(sess)
         self.db.commit()
 
+    def create_session(self, session_id: str, channel_arn: str) -> None:
+        """
+        Alias for create method to match the interface used in chat_service.
+        """
+        self.create(session_id, channel_arn)
+
     def list(self) -> List[dict]:
         """
         Повертає список об’єктів { id, channel_arn }.
